@@ -20,9 +20,9 @@ use crate::sync::UPSafeCell;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
-
+use crate::config::MAX_SYSCALL_NUM;
 pub use context::TaskContext;
-
+use crate::timer::get_time_us;
 /// The task manager, where all the tasks are managed.
 ///
 /// Functions implemented on `TaskManager` deals with all task state transitions
@@ -54,6 +54,9 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            //lab1 new add
+            syscall_times:[0;MAX_SYSCALL_NUM],
+            start_time:0
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -122,6 +125,11 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+
+            if inner.tasks[next].start_time==0{
+                inner.tasks[next].start_time=get_time_us();
+            }
+
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -135,6 +143,49 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    fn get_current_task_start_time(&self)-> usize 
+    {     
+        let inner=self.inner.exclusive_access();
+        let current=inner.current_task;
+        inner.tasks[current].start_time
+    }
+    ///这个公共接口用来查询任务的状态
+    fn get_current_task_task_status(&self)->TaskStatus
+    {
+        let inner=self.inner.exclusive_access();
+        let current=inner.current_task;
+        inner.tasks[current].task_status
+    }
+    ///这个公共接口用来添加syscall的次数，在对应的syscall id下进行syscall调用就会进行++
+    fn add_syscall_times(&self,syscall_id:usize)
+    {
+        let mut inner=self.inner.exclusive_access();
+        let current=inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id]+=1;
+    }
+    ///得到syscall_times数组，即系统调用的时间
+    fn get_syscall_times(&self)->[u32;500]
+    {
+        let inner=self.inner.exclusive_access();
+        let current=inner.current_task;
+        return inner.tasks[current].syscall_times;
+    }
+}
+
+pub fn get_current_start_time()->usize{
+    TASK_MANAGER.get_current_task_start_time()
+}
+
+pub fn get_current_task_status() ->TaskStatus{
+    TASK_MANAGER.get_current_task_task_status()
+}
+
+pub fn add_syscalls_times(syscall_id:usize){
+    TASK_MANAGER.add_syscall_times(syscall_id);
+}
+
+pub fn get_syscalls_times()->[u32;500]{
+    TASK_MANAGER.get_syscall_times()
 }
 
 /// Run the first task in task list.
